@@ -89,7 +89,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn run(
-                self,
+                &mut self,
                 opts: Opts,
             ) -> std::result::Result<(), CrablerError> {
                 use crabler::Crabler;

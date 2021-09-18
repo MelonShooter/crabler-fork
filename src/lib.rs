@@ -59,8 +59,7 @@ fn enable_logging() {
 }
 
 #[cfg(not(feature = "debug"))]
-fn enable_logging() {
-}
+fn enable_logging() {}
 
 #[async_trait(?Send)]
 pub trait WebScraper {
@@ -143,24 +142,24 @@ impl<T> Channels<T> {
     }
 }
 
-pub struct Crabler<T>
+pub struct Crabler<'a, T>
 where
     T: WebScraper,
 {
     visited_links: Arc<RwLock<HashSet<String>>>,
     workinput_ch: Channels<WorkInput>,
     workoutput_ch: Channels<WorkOutput>,
-    scraper: T,
+    scraper: &'a mut T,
     counter: Arc<AtomicUsize>,
     workers: Vec<async_std::task::JoinHandle<()>>,
 }
 
-impl<T> Crabler<T>
+impl<'a, T> Crabler<'a, T>
 where
     T: WebScraper,
 {
     /// Create new WebScraper out of given scraper struct
-    pub fn new(scraper: T) -> Self {
+    pub fn new(scraper: &'a mut T) -> Self {
         let visited_links = Arc::new(RwLock::new(HashSet::new()));
         let workinput_ch = Channels::new();
         let workoutput_ch = Channels::new();
