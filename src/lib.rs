@@ -159,7 +159,7 @@ where
     T: WebScraper,
 {
     /// Create new WebScraper out of given scraper struct
-    pub fn new(scraper: &'a mut T) -> Self {
+    pub fn new(scraper: &'a T) -> Self {
         let visited_links = Arc::new(RwLock::new(HashSet::new()));
         let workinput_ch = Channels::new();
         let workoutput_ch = Channels::new();
