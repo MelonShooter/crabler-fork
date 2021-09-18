@@ -64,14 +64,14 @@ fn enable_logging() {}
 #[async_trait(?Send)]
 pub trait WebScraper {
     async fn dispatch_on_html(
-        &mut self,
+        &self,
         selector: &str,
         response: Response,
         element: Element,
     ) -> Result<()>;
-    async fn dispatch_on_response(&mut self, response: Response) -> Result<()>;
+    async fn dispatch_on_response(&self, response: Response) -> Result<()>;
     fn all_html_selectors(&self) -> Vec<&str>;
-    async fn run(&mut self, opts: Opts) -> Result<()>;
+    async fn run(&self, opts: Opts) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -149,7 +149,7 @@ where
     visited_links: Arc<RwLock<HashSet<String>>>,
     workinput_ch: Channels<WorkInput>,
     workoutput_ch: Channels<WorkOutput>,
-    scraper: &'a mut T,
+    scraper: &'a T,
     counter: Arc<AtomicUsize>,
     workers: Vec<async_std::task::JoinHandle<()>>,
 }

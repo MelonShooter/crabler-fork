@@ -61,7 +61,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
         #[async_trait(?Send)]
         impl WebScraper for #name {
             async fn dispatch_on_html(
-                &mut self,
+                &self,
                 selector: &str,
                 request: Response,
                 element: Element,
@@ -80,7 +80,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn dispatch_on_response(
-                &mut self,
+                &self,
                 request: Response,
             ) -> std::result::Result<(), CrablerError> {
                 #( #responses; )*
@@ -89,7 +89,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn run(
-                &mut self,
+                &self,
                 opts: Opts,
             ) -> std::result::Result<(), CrablerError> {
                 use crabler::Crabler;
