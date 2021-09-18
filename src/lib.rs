@@ -71,7 +71,7 @@ pub trait WebScraper {
     ) -> Result<()>;
     async fn dispatch_on_response(&mut self, response: Response) -> Result<()>;
     fn all_html_selectors(&self) -> Vec<&str>;
-    async fn run(self, opts: Opts) -> Result<()>;
+    async fn run(&mut self, opts: Opts) -> Result<()>;
 }
 
 #[derive(Debug)]
