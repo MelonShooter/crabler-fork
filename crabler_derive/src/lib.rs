@@ -13,16 +13,32 @@ use syn::{parse_macro_input, DeriveInput};
 /// * `#[on_html("css selector", method_name)]` - will bind given css selector to a method. When page
 /// is loaded this method will be invoked for all elements that match given selector.
 /// * `#[on_response(method_name)]` - will bind given method to a successful page load action.
-pub fn web_scraper_derive(input: TokenStream) -> TokenStream {
+pub fn mutable_web_scraper_derive(input: TokenStream) -> TokenStream {
     let ast: syn::DeriveInput = parse_macro_input!(input as DeriveInput);
 
     match ast.data {
-        syn::Data::Struct(syn::DataStruct { .. }) => impl_web_scraper(&ast),
+        syn::Data::Struct(syn::DataStruct { .. }) => impl_web_scraper(&ast, true),
         _ => abort_call_site!("#[MutableWebScraper] only supports structs"),
     }
 }
 
-fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
+#[proc_macro_derive(ImmutableWebScraper, attributes(on_html, on_response))]
+#[proc_macro_error]
+/// Macro to derive ImmutableWebScraper trait on to a given struct.
+/// Supported options:
+/// * `#[on_html("css selector", method_name)]` - will bind given css selector to a method. When page
+/// is loaded this method will be invoked for all elements that match given selector.
+/// * `#[on_response(method_name)]` - will bind given method to a successful page load action.
+pub fn immutable_web_scraper_derive(input: TokenStream) -> TokenStream {
+    let ast: syn::DeriveInput = parse_macro_input!(input as DeriveInput);
+
+    match ast.data {
+        syn::Data::Struct(syn::DataStruct { .. }) => impl_web_scraper(&ast, false),
+        _ => abort_call_site!("#[ImmutableWebScraper] only supports structs"),
+    }
+}
+
+fn impl_web_scraper(ast: &syn::DeriveInput, is_mutable: bool) -> TokenStream {
     use syn::*;
 
     let name = &ast.ident;
@@ -57,11 +73,25 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
         }
     }
 
+    let self_ref;
+    let crabler_type;
+    let scraper_type;
+
+    if is_mutable {
+        self_ref = quote!(&mut self);
+        crabler_type = quote!(MutableCrabler);
+        scraper_type = quote!(MutableWebScraper);
+    } else {
+        self_ref = quote!(&self);
+        crabler_type = quote!(ImmutableCrabler);
+        scraper_type = quote!(ImmutableWebScraper);
+    }
+
     let gen = quote! {
         #[async_trait(?Send)]
-        impl MutableWebScraper for #name {
+        impl #scraper_type for #name {
             async fn dispatch_on_html(
-                &mut self,
+                #self_ref,
                 selector: &str,
                 request: Response,
                 element: Element,
@@ -80,7 +110,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn dispatch_on_response(
-                &mut self,
+                #self_ref,
                 request: Response,
             ) -> std::result::Result<(), CrablerError> {
                 #( #responses; )*
@@ -89,12 +119,12 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn run(
-                &mut self,
+                #self_ref,
                 opts: Opts,
             ) -> std::result::Result<(), CrablerError> {
-                use crabler::Crabler;
+                use crabler::#crabler_type;
 
-                let mut crabler = Crabler::new(self);
+                let mut crabler = #crabler_type::new(self);
 
                 for url in &opts.urls {
                     crabler.navigate(url).await?;

@@ -34,6 +34,7 @@
 //!```
 
 mod opts;
+use async_std::task::JoinHandle;
 pub use opts::*;
 
 mod errors;
@@ -51,6 +52,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub use async_trait::async_trait;
+pub use crabler_derive::ImmutableWebScraper;
 pub use crabler_derive::MutableWebScraper;
 
 #[cfg(feature = "debug")]
@@ -72,6 +74,19 @@ pub trait MutableWebScraper {
     async fn dispatch_on_response(&mut self, response: Response) -> Result<()>;
     fn all_html_selectors(&self) -> Vec<&str>;
     async fn run(&mut self, opts: Opts) -> Result<()>;
+}
+
+#[async_trait(?Send)]
+pub trait ImmutableWebScraper {
+    async fn dispatch_on_html(
+        &self,
+        selector: &str,
+        response: Response,
+        element: Element,
+    ) -> Result<()>;
+    async fn dispatch_on_response(&self, response: Response) -> Result<()>;
+    fn all_html_selectors(&self) -> Vec<&str>;
+    async fn run(&self, opts: Opts) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -142,10 +157,7 @@ impl<T> Channels<T> {
     }
 }
 
-pub struct Crabler<'a, T>
-where
-    T: MutableWebScraper,
-{
+pub struct MutableCrabler<'a, T: MutableWebScraper> {
     visited_links: Arc<RwLock<HashSet<String>>>,
     workinput_ch: Channels<WorkInput>,
     workoutput_ch: Channels<WorkOutput>,
@@ -154,65 +166,43 @@ where
     workers: Vec<async_std::task::JoinHandle<()>>,
 }
 
-impl<'a, T> Crabler<'a, T>
-where
-    T: MutableWebScraper,
-{
-    /// Create new MutableWebScraper out of given scraper struct
-    pub fn new(scraper: &'a mut T) -> Self {
-        let visited_links = Arc::new(RwLock::new(HashSet::new()));
-        let workinput_ch = Channels::new();
-        let workoutput_ch = Channels::new();
-        let counter = Arc::new(AtomicUsize::new(0));
-        let workers = vec![];
-
-        Crabler {
-            visited_links,
-            workinput_ch,
-            workoutput_ch,
-            scraper,
-            counter,
-            workers,
+macro_rules! scraper_new_impl {
+    ( true,$identifier:ident ) => {
+        MutableCrabler {
+            visited_links: Arc::new(RwLock::new(HashSet::new())),
+            workinput_ch: Channels::new(),
+            workoutput_ch: Channels::new(),
+            scraper: $identifier,
+            counter: Arc::new(AtomicUsize::new(0)),
+            workers: vec![],
         }
-    }
-
-    async fn shutdown(&mut self) -> Result<()> {
-        for _ in self.workers.iter() {
-            self.workinput_ch.tx.send(WorkInput::Exit).await?;
+    };
+    ( false,$identifier:ident ) => {
+        ImmutableCrabler {
+            visited_links: Arc::new(RwLock::new(HashSet::new())),
+            workinput_ch: Channels::new(),
+            workoutput_ch: Channels::new(),
+            scraper: $identifier,
+            counter: Arc::new(AtomicUsize::new(0)),
+            workers: vec![],
         }
+    };
+}
 
-        self.workinput_ch.tx.close();
-        self.workinput_ch.rx.close();
-        self.workoutput_ch.tx.close();
-        self.workoutput_ch.rx.close();
-
-        Ok(())
-    }
-
-    /// Schedule scraper to visit given url,
-    /// this will be executed on one of worker tasks
-    pub async fn navigate(&mut self, url: &str) -> Result<()> {
-        debug!("Increasing counter by 1");
-        self.counter.fetch_add(1, Ordering::SeqCst);
-        Ok(self
-            .workinput_ch
-            .tx
-            .send(WorkInput::Navigate(url.to_string()))
-            .await?)
-    }
-
-    /// Run processing loop for the given MutableWebScraper
-    pub async fn run(&mut self) -> Result<()> {
+macro_rules! scraper_run_impl {
+    ( $identifier:ident ) => {{
         enable_logging();
 
-        let ret = self.event_loop().await;
-        self.shutdown().await?;
+        let ret = $identifier.event_loop().await;
+        $identifier.shutdown().await?;
         ret
-    }
+    }};
+}
 
-    async fn event_loop(&mut self) -> Result<()> {
+macro_rules! event_loop_impl {
+    ( $identifier:ident ) => {
         loop {
-            let output = self.workoutput_ch.rx.recv().await?;
+            let output = $identifier.workoutput_ch.rx.recv().await?;
             let response_url;
             let response_status;
             let mut response_destination = None;
@@ -224,7 +214,7 @@ where
                     response_url = url.clone();
                     response_status = status;
 
-                    let selectors = self
+                    let selectors = $identifier
                         .scraper
                         .all_html_selectors()
                         .iter()
@@ -237,10 +227,11 @@ where
                                 status,
                                 url.clone(),
                                 None,
-                                self.workinput_ch.tx.clone(),
-                                self.counter.clone(),
+                                $identifier.workinput_ch.tx.clone(),
+                                $identifier.counter.clone(),
                             );
-                            self.scraper
+                            $identifier
+                                .scraper
                                 .dispatch_on_html(selector.as_str(), response, el)
                                 .await?;
                         }
@@ -273,30 +264,30 @@ where
                 response_status,
                 response_url,
                 response_destination,
-                self.workinput_ch.tx.clone(),
-                self.counter.clone(),
+                $identifier.workinput_ch.tx.clone(),
+                $identifier.counter.clone(),
             );
-            self.scraper.dispatch_on_response(response).await?;
+            $identifier.scraper.dispatch_on_response(response).await?;
 
             debug!("Decreasing counter by 1");
-            self.counter.fetch_sub(1, Ordering::SeqCst);
+            $identifier.counter.fetch_sub(1, Ordering::SeqCst);
 
             debug!(
                 "Done processing work output, counter is at {}",
-                self.counter.load(Ordering::SeqCst)
+                $identifier.counter.load(Ordering::SeqCst)
             );
-            if self.counter.load(Ordering::SeqCst) == 0 {
+            if $identifier.counter.load(Ordering::SeqCst) == 0 {
                 return Ok(());
             }
         }
-    }
+    };
+}
 
-    /// Create and start new worker tasks.
-    /// Worker task will automatically exit after scraper instance is freed.
-    pub fn start_worker(&mut self) {
-        let visited_links = self.visited_links.clone();
-        let workinput_rx = self.workinput_ch.rx.clone();
-        let workoutput_tx = self.workoutput_ch.tx.clone();
+macro_rules! start_worker_impl {
+    ( $identifier:ident ) => {
+        let visited_links = $identifier.visited_links.clone();
+        let workinput_rx = $identifier.workinput_ch.rx.clone();
+        let workoutput_tx = $identifier.workoutput_ch.tx.clone();
 
         let worker = Worker::new(visited_links, workinput_rx, workoutput_tx);
 
@@ -314,8 +305,113 @@ where
             }
         });
 
-        self.workers.push(handle);
+        $identifier.workers.push(handle);
+    };
+}
+
+impl<'a, T> MutableCrabler<'a, T>
+where
+    T: MutableWebScraper,
+{
+    /// Create new MutableWebScraper out of given scraper struct
+    pub fn new(scraper: &'a mut T) -> Self {
+        scraper_new_impl!(true, scraper)
     }
+
+    async fn shutdown(&self) -> Result<()> {
+        scraper_shutdown(&self.workers, &self.workinput_ch, &self.workoutput_ch).await
+    }
+
+    /// Schedule scraper to visit given url,
+    /// this will be executed on one of worker tasks
+    pub async fn navigate(&self, url: &str) -> Result<()> {
+        scraper_navigate(&self.counter, &self.workinput_ch, url).await
+    }
+
+    /// Run processing loop for the given MutableWebScraper
+    pub async fn run(&mut self) -> Result<()> {
+        scraper_run_impl!(self)
+    }
+
+    async fn event_loop(&mut self) -> Result<()> {
+        event_loop_impl!(self)
+    }
+
+    /// Create and start new worker tasks.
+    /// Worker task will automatically exit after scraper instance is freed.
+    pub fn start_worker(&mut self) {
+        start_worker_impl!(self);
+    }
+}
+
+pub struct ImmutableCrabler<'a, T: ImmutableWebScraper> {
+    visited_links: Arc<RwLock<HashSet<String>>>,
+    workinput_ch: Channels<WorkInput>,
+    workoutput_ch: Channels<WorkOutput>,
+    scraper: &'a T,
+    counter: Arc<AtomicUsize>,
+    workers: Vec<async_std::task::JoinHandle<()>>,
+}
+
+impl<'a, T> ImmutableCrabler<'a, T>
+where
+    T: ImmutableWebScraper,
+{
+    /// Create new ImmutableWebScraper out of given scraper struct
+    pub fn new(scraper: &'a T) -> Self {
+        scraper_new_impl!(false, scraper)
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        scraper_shutdown(&self.workers, &self.workinput_ch, &self.workoutput_ch).await
+    }
+
+    /// Schedule scraper to visit given url,
+    /// this will be executed on one of worker tasks
+    pub async fn navigate(&self, url: &str) -> Result<()> {
+        scraper_navigate(&self.counter, &self.workinput_ch, url).await
+    }
+
+    /// Run processing loop for the given MutableWebScraper
+    pub async fn run(&self) -> Result<()> {
+        scraper_run_impl!(self)
+    }
+
+    async fn event_loop(&self) -> Result<()> {
+        event_loop_impl!(self)
+    }
+
+    /// Create and start new worker tasks.
+    /// Worker task will automatically exit after scraper instance is freed.
+    pub fn start_worker(&mut self) {
+        start_worker_impl!(self);
+    }
+}
+
+async fn scraper_shutdown(
+    workers: &Vec<JoinHandle<()>>,
+    input: &Channels<WorkInput>,
+    output: &Channels<WorkOutput>,
+) -> Result<()> {
+    for _ in workers.iter() {
+        input.tx.send(WorkInput::Exit).await?;
+    }
+    input.tx.close();
+    input.rx.close();
+    output.tx.close();
+    output.rx.close();
+    Ok(())
+}
+
+async fn scraper_navigate(
+    counter: &Arc<AtomicUsize>,
+    input: &Channels<WorkInput>,
+    url: &str,
+) -> Result<()> {
+    debug!("Increasing counter by 1");
+    counter.fetch_add(1, Ordering::SeqCst);
+
+    Ok(input.tx.send(WorkInput::Navigate(url.to_string())).await?)
 }
 
 struct Worker {
