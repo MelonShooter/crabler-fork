@@ -5,18 +5,18 @@
 //!
 //!use crabler::*;
 //!
-//!#[derive(WebScraper)]
+//!#[derive(MutableWebScraper)]
 //!#[on_response(response_handler)]
 //!#[on_html("a[href]", print_handler)]
 //!struct Scraper {}
 //!
 //!impl Scraper {
-//!    async fn response_handler(&self, response: Response) -> Result<()> {
+//!    async fn response_handler(&mut self, response: Response) -> Result<()> {
 //!        println!("Status {}", response.status);
 //!        Ok(())
 //!    }
 //!
-//!    async fn print_handler(&self, response: Response, a: Element) -> Result<()> {
+//!    async fn print_handler(&mut self, response: Response, a: Element) -> Result<()> {
 //!        if let Some(href) = a.attr("href") {
 //!            println!("Found link {} on {}", href, response.url);
 //!        }
@@ -51,7 +51,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub use async_trait::async_trait;
-pub use crabler_derive::WebScraper;
+pub use crabler_derive::MutableWebScraper;
 
 #[cfg(feature = "debug")]
 fn enable_logging() {
@@ -62,16 +62,16 @@ fn enable_logging() {
 fn enable_logging() {}
 
 #[async_trait(?Send)]
-pub trait WebScraper {
+pub trait MutableWebScraper {
     async fn dispatch_on_html(
-        &self,
+        &mut self,
         selector: &str,
         response: Response,
         element: Element,
     ) -> Result<()>;
-    async fn dispatch_on_response(&self, response: Response) -> Result<()>;
+    async fn dispatch_on_response(&mut self, response: Response) -> Result<()>;
     fn all_html_selectors(&self) -> Vec<&str>;
-    async fn run(&self, opts: Opts) -> Result<()>;
+    async fn run(&mut self, opts: Opts) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -144,22 +144,22 @@ impl<T> Channels<T> {
 
 pub struct Crabler<'a, T>
 where
-    T: WebScraper,
+    T: MutableWebScraper,
 {
     visited_links: Arc<RwLock<HashSet<String>>>,
     workinput_ch: Channels<WorkInput>,
     workoutput_ch: Channels<WorkOutput>,
-    scraper: &'a T,
+    scraper: &'a mut T,
     counter: Arc<AtomicUsize>,
     workers: Vec<async_std::task::JoinHandle<()>>,
 }
 
 impl<'a, T> Crabler<'a, T>
 where
-    T: WebScraper,
+    T: MutableWebScraper,
 {
-    /// Create new WebScraper out of given scraper struct
-    pub fn new(scraper: &'a T) -> Self {
+    /// Create new MutableWebScraper out of given scraper struct
+    pub fn new(scraper: &'a mut T) -> Self {
         let visited_links = Arc::new(RwLock::new(HashSet::new()));
         let workinput_ch = Channels::new();
         let workoutput_ch = Channels::new();
@@ -201,7 +201,7 @@ where
             .await?)
     }
 
-    /// Run processing loop for the given WebScraper
+    /// Run processing loop for the given MutableWebScraper
     pub async fn run(&mut self) -> Result<()> {
         enable_logging();
 

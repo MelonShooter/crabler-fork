@@ -16,12 +16,12 @@ struct Scraper {
 }
 
 impl Scraper {
-    async fn response_handler(&mut self, response: Response) -> Result<()> {
+    async fn response_handler(&self, response: Response) -> Result<()> {
         self.visited_links.write().unwrap().push(response.url);
         Ok(())
     }
 
-    async fn print_handler(&mut self, _response: Response, a: Element) -> Result<()> {
+    async fn print_handler(&self, _response: Response, a: Element) -> Result<()> {
         if let Some(href) = a.attr("href") {
             self.saw_links.write().unwrap().push(href);
         } else {

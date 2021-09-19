@@ -6,9 +6,9 @@ use proc_macro_error::*;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
-#[proc_macro_derive(WebScraper, attributes(on_html, on_response))]
+#[proc_macro_derive(MutableWebScraper, attributes(on_html, on_response))]
 #[proc_macro_error]
-/// Macro to derive WebScraper trait on to a given struct.
+/// Macro to derive MutableWebScraper trait on to a given struct.
 /// Supported options:
 /// * `#[on_html("css selector", method_name)]` - will bind given css selector to a method. When page
 /// is loaded this method will be invoked for all elements that match given selector.
@@ -18,7 +18,7 @@ pub fn web_scraper_derive(input: TokenStream) -> TokenStream {
 
     match ast.data {
         syn::Data::Struct(syn::DataStruct { .. }) => impl_web_scraper(&ast),
-        _ => abort_call_site!("#[WebScraper] only supports structs"),
+        _ => abort_call_site!("#[MutableWebScraper] only supports structs"),
     }
 }
 
@@ -59,9 +59,9 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
 
     let gen = quote! {
         #[async_trait(?Send)]
-        impl WebScraper for #name {
+        impl MutableWebScraper for #name {
             async fn dispatch_on_html(
-                &self,
+                &mut self,
                 selector: &str,
                 request: Response,
                 element: Element,
@@ -80,7 +80,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn dispatch_on_response(
-                &self,
+                &mut self,
                 request: Response,
             ) -> std::result::Result<(), CrablerError> {
                 #( #responses; )*
@@ -89,7 +89,7 @@ fn impl_web_scraper(ast: &syn::DeriveInput) -> TokenStream {
             }
 
             async fn run(
-                &self,
+                &mut self,
                 opts: Opts,
             ) -> std::result::Result<(), CrablerError> {
                 use crabler::Crabler;
