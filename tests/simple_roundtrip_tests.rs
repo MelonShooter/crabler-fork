@@ -7,7 +7,7 @@ use std::sync::RwLock;
 #[macro_use]
 mod common;
 
-#[derive(WebScraper)]
+#[derive(MutableWebScraper)]
 #[on_response(response_handler)]
 #[on_html("a[href]", print_handler)]
 struct Scraper {
@@ -37,7 +37,7 @@ async fn test_roundtrip() {
     let saw_links = Arc::new(RwLock::new(vec![]));
     let visited_links = Arc::new(RwLock::new(vec![]));
 
-    let scraper = Scraper {
+    let mut scraper = Scraper {
         visited_links: visited_links.clone(),
         saw_links: saw_links.clone(),
     };
